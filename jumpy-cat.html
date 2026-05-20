@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Jumpy Cat</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #1a1a2e;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      border-radius: 16px;
+      box-shadow: 0 0 50px rgba(255,140,0,0.35), 0 20px 60px rgba(0,0,0,0.6);
+    }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 480, H = 640;
+canvas.width = W;
+canvas.height = H;
+
+function resize() {
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H) * 0.95;
+  canvas.style.width  = W * s + 'px';
+  canvas.style.height = H * s + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ─── Constants ───────────────────────────────────────────────
+const GROUND = 80;
+const PW     = 65;
+const GAP    = 168;
+
+// ─── State ───────────────────────────────────────────────────
+let state = 'start';
+let score = 0;
+let best  = +localStorage.getItem('jcBest') || 0;
+let frame = 0;
+let bobT  = 0;
+let pipeSpeed = 2.8;
+
+// ─── Cat ─────────────────────────────────────────────────────
+const cat = {
+  x: 110, y: H / 2, vy: 0, rot: 0,
+  g: 0.45, jf: -9.2,
+
+  get hLeft()   { return this.x - 18; },
+  get hRight()  { return this.x + 28; },
+  get hTop()    { return this.y - 18; },
+  get hBottom() { return this.y + 16; },
+
+  jump() { this.vy = this.jf; },
+
+  update() {
+    this.vy += this.g;
+    this.y  += this.vy;
+    this.rot = Math.max(-0.45, Math.min(1.2, this.vy * 0.08));
+    if (this.hBottom >= H - GROUND) {
+      this.y = H - GROUND - 16;
+      if (state === 'playing') die();
+    }
+    if (this.hTop <= 0) { this.y = 18; this.vy = 0; }
+  },
+
+  reset() { this.y = H / 2; this.vy = 0; this.rot = 0; },
+
+  draw(bob = 0) {
+    ctx.save();
+    ctx.translate(this.x, this.y + bob);
+    ctx.rotate(this.rot);
+
+    // Tail
+    ctx.strokeStyle = '#c97018';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-24, 6);
+    ctx.bezierCurveTo(-50, 4, -54, -22, -37, -32);
+    ctx.stroke();
+
+    // Body
+    ctx.fillStyle = '#f09535';
+    ctx.beginPath();
+    ctx.ellipse(0, 6, 28, 17, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body stripes
+    ctx.strokeStyle = 'rgba(170,90,15,0.38)';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    [[-8, -9, -6, 18], [2, -12, 4, 18], [13, -11, 14, 16]].forEach(([x1,y1,x2,y2]) => {
+      ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    });
+
+    // Head
+    ctx.fillStyle = '#f09535';
+    ctx.beginPath();
+    ctx.arc(20, -8, 18, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Outer ears
+    ctx.fillStyle = '#f09535';
+    ctx.beginPath(); ctx.moveTo(9,-22); ctx.lineTo(5,-41); ctx.lineTo(21,-25); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(28,-23); ctx.lineTo(38,-41); ctx.lineTo(39,-22); ctx.closePath(); ctx.fill();
+
+    // Inner ear (pink)
+    ctx.fillStyle = '#ffaabf';
+    ctx.beginPath(); ctx.moveTo(11,-24); ctx.lineTo(8,-36); ctx.lineTo(19,-26); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(29,-24); ctx.lineTo(37,-36); ctx.lineTo(37,-23); ctx.closePath(); ctx.fill();
+
+    // Muzzle
+    ctx.fillStyle = '#fde8c4';
+    ctx.beginPath();
+    ctx.ellipse(20, -3, 10, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes
+    ctx.fillStyle = '#222';
+    ctx.beginPath(); ctx.arc(14, -13, 3.8, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(26, -13, 3.8, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'white';
+    ctx.beginPath(); ctx.arc(15.5,-14.5, 1.4, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(27.5,-14.5, 1.4, 0, Math.PI * 2); ctx.fill();
+
+    // Nose
+    ctx.fillStyle = '#ff8bae';
+    ctx.beginPath();
+    ctx.moveTo(20,-5); ctx.lineTo(17,-8); ctx.lineTo(23,-8);
+    ctx.closePath(); ctx.fill();
+
+    // Mouth
+    ctx.strokeStyle = '#553300';
+    ctx.lineWidth = 1.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(20,-5); ctx.quadraticCurveTo(17,-1,14,-1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(20,-5); ctx.quadraticCurveTo(23,-1,26,-1); ctx.stroke();
+
+    // Whiskers
+    ctx.strokeStyle = 'rgba(60,40,20,0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(10,-6); ctx.lineTo(-8,-4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10,-4); ctx.lineTo(-8, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(10,-2); ctx.lineTo(-8, 4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(30,-6); ctx.lineTo(48,-4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(30,-4); ctx.lineTo(48, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(30,-2); ctx.lineTo(48, 4); ctx.stroke();
+
+    ctx.restore();
+  }
+};
+
+// ─── Pipes ───────────────────────────────────────────────────
+const pipes = [];
+
+function makePipe() {
+  const minTop = 60;
+  const maxTop = H - GROUND - GAP - 60;
+  const topH   = minTop + Math.random() * (maxTop - minTop);
+  pipes.push({ x: W + 10, topH, botY: topH + GAP, scored: false });
+}
+
+function updatePipes() {
+  if (frame % 90 === 0) makePipe();
+  for (let i = pipes.length - 1; i >= 0; i--) {
+    const p = pipes[i];
+    p.x -= pipeSpeed;
+
+    if (!p.scored && p.x + PW < cat.x) {
+      p.scored = true;
+      score++;
+      if (score % 5 === 0) pipeSpeed = Math.min(5.5, pipeSpeed + 0.25);
+    }
+    if (p.x + PW < -10) { pipes.splice(i, 1); continue; }
+
+    if (cat.hRight > p.x && cat.hLeft < p.x + PW) {
+      if (cat.hTop < p.topH || cat.hBottom > p.botY) die();
+    }
+  }
+}
+
+function drawPipes() {
+  pipes.forEach(p => {
+    const g = ctx.createLinearGradient(p.x, 0, p.x + PW, 0);
+    g.addColorStop(0,    '#357a35');
+    g.addColorStop(0.25, '#52b052');
+    g.addColorStop(0.6,  '#3a8a3a');
+    g.addColorStop(1,    '#2a5e2a');
+    ctx.fillStyle = g;
+
+    // Top pipe body
+    ctx.fillRect(p.x, 0, PW, p.topH - 24);
+    // Top cap
+    ctx.fillStyle = '#2a5e2a';
+    ctx.fillRect(p.x - 5, p.topH - 28, PW + 10, 28);
+    ctx.fillStyle = '#52b052';
+    ctx.fillRect(p.x - 5, p.topH - 28, 10, 28);
+
+    ctx.fillStyle = g;
+    // Bottom pipe body
+    ctx.fillRect(p.x, p.botY + 24, PW, H - GROUND - p.botY - 24);
+    // Bottom cap
+    ctx.fillStyle = '#2a5e2a';
+    ctx.fillRect(p.x - 5, p.botY, PW + 10, 28);
+    ctx.fillStyle = '#52b052';
+    ctx.fillRect(p.x - 5, p.botY, 10, 28);
+  });
+}
+
+// ─── Clouds ──────────────────────────────────────────────────
+const clouds = Array.from({ length: 5 }, (_, i) => ({
+  x: i * 110 + Math.random() * 60,
+  y: 30 + Math.random() * 130,
+  w: 55 + Math.random() * 50,
+  s: 0.25 + Math.random() * 0.35
+}));
+
+// ─── Background ──────────────────────────────────────────────
+function drawBg() {
+  const sk = ctx.createLinearGradient(0, 0, 0, H);
+  sk.addColorStop(0,    '#4daee0');
+  sk.addColorStop(0.65, '#9ed6f0');
+  sk.addColorStop(1,    '#b8eab8');
+  ctx.fillStyle = sk;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.9)';
+  clouds.forEach(c => {
+    ctx.beginPath();
+    ctx.arc(c.x,             c.y,            c.w * 0.42, 0, Math.PI * 2);
+    ctx.arc(c.x + c.w * 0.3, c.y - c.w * 0.15, c.w * 0.33, 0, Math.PI * 2);
+    ctx.arc(c.x + c.w * 0.6, c.y,            c.w * 0.28, 0, Math.PI * 2);
+    ctx.fill();
+    if (state === 'playing') {
+      c.x -= c.s;
+      if (c.x + c.w < 0) { c.x = W + c.w; c.y = 30 + Math.random() * 130; }
+    }
+  });
+
+  // Ground
+  ctx.fillStyle = '#8B6914';
+  ctx.fillRect(0, H - GROUND, W, GROUND);
+  ctx.fillStyle = '#82c028';
+  ctx.fillRect(0, H - GROUND, W, 18);
+
+  // Grass tufts (static decoration)
+  ctx.fillStyle = '#67a020';
+  for (let i = 0; i < W; i += 32) {
+    ctx.fillRect(i + 4,  H - GROUND - 5, 4, 10);
+    ctx.fillRect(i + 12, H - GROUND - 9, 4, 14);
+    ctx.fillRect(i + 21, H - GROUND - 4, 4, 9);
+  }
+}
+
+// ─── UI helpers ──────────────────────────────────────────────
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function drawScore() {
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 52px Arial';
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillText(score, W / 2 + 2, 82);
+  ctx.fillStyle = 'white';
+  ctx.fillText(score, W / 2, 80);
+}
+
+function drawStartScreen() {
+  ctx.fillStyle = 'rgba(15,8,0,0.5)';
+  roundRect(W/2 - 178, 120, 356, 300, 22);
+  ctx.fill();
+  ctx.strokeStyle = '#FFA500';
+  ctx.lineWidth = 3;
+  roundRect(W/2 - 178, 120, 356, 300, 22);
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(255,120,0,0.8)';
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 52px Arial';
+  ctx.fillText('Jumpy Cat', W / 2, 198);
+  ctx.shadowBlur = 0;
+
+  ctx.font = '20px Arial';
+  ctx.fillStyle = 'white';
+  ctx.fillText('Click or press Space to jump', W / 2, 300);
+
+  ctx.font = '22px Arial';
+  ctx.fillStyle = '#FFD700';
+  ctx.fillText('Best: ' + best, W / 2, 345);
+
+  ctx.font = '18px Arial';
+  ctx.fillStyle = '#aaddff';
+  ctx.fillText('Avoid the pipes!', W / 2, 386);
+}
+
+function drawGameOver() {
+  ctx.fillStyle = 'rgba(15,5,0,0.6)';
+  roundRect(W/2 - 178, 120, 356, 330, 22);
+  ctx.fill();
+  ctx.strokeStyle = '#FF6060';
+  ctx.lineWidth = 3;
+  roundRect(W/2 - 178, 120, 356, 330, 22);
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(255,0,0,0.5)';
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = '#FF6060';
+  ctx.font = 'bold 50px Arial';
+  ctx.fillText('Game Over!', W / 2, 200);
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#FFD700';
+  ctx.font = 'bold 38px Arial';
+  ctx.fillText('Score: ' + score, W / 2, 268);
+
+  ctx.fillStyle = 'white';
+  ctx.font = '26px Arial';
+  ctx.fillText('Best: ' + best, W / 2, 314);
+
+  if (score > 0 && score >= best) {
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 22px Arial';
+    ctx.fillText('New Record!', W / 2, 358);
+  }
+
+  ctx.fillStyle = '#aaddff';
+  ctx.font = '20px Arial';
+  ctx.fillText('Click or Space to try again', W / 2, 412);
+}
+
+// ─── Flow ────────────────────────────────────────────────────
+function die() {
+  if (state !== 'playing') return;
+  state = 'dead';
+  if (score > best) { best = score; localStorage.setItem('jcBest', best); }
+}
+
+function reset() {
+  score = 0; frame = 0; pipeSpeed = 2.8;
+  pipes.length = 0;
+  cat.reset();
+  state = 'playing';
+}
+
+function handleInput() {
+  if      (state === 'start')   { state = 'playing'; cat.jump(); }
+  else if (state === 'playing') { cat.jump(); }
+  else if (state === 'dead')    { reset(); }
+}
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); handleInput(); }
+});
+canvas.addEventListener('click', handleInput);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); handleInput(); }, { passive: false });
+
+// ─── Loop ────────────────────────────────────────────────────
+function loop() {
+  if (state === 'playing') {
+    frame++;
+    updatePipes();
+    cat.update();
+  }
+
+  drawBg();
+  drawPipes();
+
+  if (state === 'start') {
+    bobT += 0.05;
+    cat.draw(Math.sin(bobT) * 6);
+    drawStartScreen();
+  } else if (state === 'playing') {
+    cat.draw();
+    drawScore();
+  } else {
+    cat.draw();
+    drawScore();
+    drawGameOver();
+  }
+
+  requestAnimationFrame(loop);
+}
+
+loop();
+</script>
+</body>
+</html>
